@@ -30,7 +30,7 @@ class StationGeocoderTests(TestCase):
     def run_command(self, **options):
         output = StringIO()
         with patch('routes.management.commands.geocode_fuel_stations.OpenRouteServiceClient', return_value=self.provider):
-            call_command('geocode_fuel_stations', stdout=output, **options)
+            call_command('geocode_fuel_stations', stdout=output, no_color=True, **options)
         self.provider.get_route.assert_not_called()
         return output.getvalue()
 

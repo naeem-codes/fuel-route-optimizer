@@ -1,8 +1,19 @@
 # Fuel Route Optimizer
 
+**Deployed API:** [https://fuel-route-optimizer.up.railway.app](https://fuel-route-optimizer.up.railway.app)
+
 ## Overview
 
 A Django backend for the fuel-route planning assessment. Start and finish locations are geocoded within the USA; the API fetches a driving route, matches locally stored fuel stations, and returns cost-aware fuel purchases and total purchase cost. The vehicle uses **10 MPG**, has a **500-mile range**, and starts with a full tank.
+
+## Live API
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | [`/api/health/`](https://fuel-route-optimizer.up.railway.app/api/health/) | Health check |
+| POST | [`/api/routes/`](https://fuel-route-optimizer.up.railway.app/api/routes/) | Driving route and fuel plan |
+
+See [API Usage](#api-usage) for request and response examples.
 
 ## Key Features
 
@@ -89,7 +100,7 @@ requirements.txt
 | `routing.py` | Provider HTTP requests, normalized immutable results and sanitized exceptions. |
 | `cached_routing.py` | Best-effort caching around runtime provider operations. |
 | `route_planner.py` | Orchestration, distance calibration and response formatting. |
-| `station_geocoder.py` | Compose station addresses and persist resolved coordinates. |
+| `station_geocoder.py` | Compose station queries, validate geographic evidence and persist accepted coordinates. |
 | `station_matcher.py` | Local corridor filtering and route-position projection. |
 | `fuel_optimizer.py` | Pure purchase optimization; no ORM, HTTP or provider dependency. |
 
@@ -144,9 +155,11 @@ Required columns:
 OPIS Truckstop ID, Truckstop Name, Address, City, State, Rack ID, Retail Price
 ```
 
-The command validates the file, headers and rows, trims whitespace, and stores Decimal prices with up to eight fractional digits. Malformed rows fail with contextual errors rather than being skipped.
+The command validates the file, headers and rows, trims whitespace, and stores finite, strictly positive Decimal prices with up to eight fractional digits. Malformed rows fail with contextual errors rather than being skipped.
 
 Without `--replace`, imports append every valid source row. Duplicate OPIS IDs, differing prices under one ID, and identical source rows are intentionally preserved. Batched inserts run in one transaction; failures roll back the entire import.
+
+The supplied dataset also contains Canadian rows. Import preserves them, while start/finish geocoding and station enrichment are constrained to the USA.
 
 `--replace` deletes existing station rows and reloads in the same transaction. **This also removes previously enriched coordinates** because the CSV contains none.
 
@@ -162,86 +175,117 @@ python manage.py geocode_fuel_stations --force --limit 3
 - `--limit N` caps attempted records, including unresolved ones. N must be positive.
 - `--force` includes already-geocoded records.
 - Each station address combines name, street address, city and state and makes at most one request through the existing provider client.
-- Coordinates are stored as six-place Decimals; only coordinate fields are updated.
+- Results must provide US/USA country evidence, a matching state and city (locality, or localadmin when locality is absent), and a `venue`, `address` or `street` layer. Administrative, unknown and missing layers are rejected; case, punctuation and whitespace differences are normalized.
+- Accepted coordinates are stored as six-place Decimals; only coordinate fields are updated.
 - Unresolved stations are reported and processing continues without assigning fake coordinates. Existing coordinates remain intact if a forced lookup is unresolved.
 - Configuration or systemic provider failures stop the command. Earlier successful updates remain saved so later runs can resume.
 
 The command reports unresolved records and a final summary. Check provider quotas before large batches; automatic pacing and retry/backoff are not implemented.
 
+### Design decision: preprocessing rather than runtime geocoding
+
+| Approach | Benefits | Tradeoffs |
+|---|---|---|
+| Geocode stations during route requests | No initial enrichment step | Potentially hundreds or thousands of provider calls, added latency and rate-limit exposure; conflicts with the assessment's roughly 1–3-call goal. |
+| Preprocess/backfill station coordinates | Reusable coordinates; fully local matching; predictable provider-call volume | Requires initial enrichment and review; stored locations can become stale. |
+
+This implementation geocodes the user's start and finish at request time, uses stored fuel-station coordinates, and performs matching and optimization locally. A cold successful request uses **two geocodes and one routing request**; a warm cached repeat can use **zero provider requests**.
+
+The dataset's highway/interchange-style addresses are not always reliably resolved by free-text HeiGIT/Pelias geocoding. The enrichment validator checks country/state/locality/layer evidence and leaves uncertain stations unresolved instead of silently saving incorrect coordinates. Matching requires both stored coordinates; there is no separate verification-status field, so coordinates should be populated only through validated enrichment or independently verified location evidence. Numeric coordinates and matching metadata alone do not prove exact station identity.
+
+For production enrichment, structured geocoding, operator-provided coordinates or a more authoritative station-location dataset would be preferable. Importing the CSV does not guarantee that every station can be geocoded successfully.
+
 ## API Usage
 
-### Plan a route
+### Short route: Dallas → Austin
 
-`POST /api/routes/`
+`POST https://fuel-route-optimizer.up.railway.app/api/routes/`
 
 ```json
-{"start": "Dallas, TX", "finish": "Austin, TX"}
+{
+  "start": "Dallas, TX",
+  "finish": "Austin, TX"
+}
 ```
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/routes/ \
+curl -X POST https://fuel-route-optimizer.up.railway.app/api/routes/ \
   -H "Content-Type: application/json" \
   -d '{"start":"Dallas, TX","finish":"Austin, TX"}'
 ```
 
 Both fields are required strings, trimmed, nonblank and at most 255 characters. They must differ after trimming and case-insensitive comparison. Successful requests return HTTP 200.
 
-The manually verified Dallas–Austin request returned approximately **200.46 miles** and **3.2199 hours**, with no fuel purchase. The example below uses those route values; labels and coordinates are illustrative, and geometry is abbreviated to two points rather than the full driving polyline. Consumed gallons are illustrated from the displayed distance; the API calculates them from unrounded provider distance.
+The verified Dallas–Austin route is approximately **200.46 miles** and **3.2199 hours**. It is within the vehicle's initial 500-mile range, so `fuel.stops` is empty, purchased gallons are `"0.000000"`, and purchase cost is **$0.00**.
+
+### Long route: Dallas → Van Horn
+
+`POST https://fuel-route-optimizer.up.railway.app/api/routes/`
 
 ```json
+{
+  "start": "Dallas, TX",
+  "finish": "Van Horn, TX"
+}
+```
+
+Verified HTTP 200 response, abbreviated below. The `jsonc` comment replaces the full driving polyline for readability; the actual API returns a complete GeoJSON coordinate array.
+
+```jsonc
 {
   "start": {
     "query": "Dallas, TX",
     "label": "Dallas, TX, USA",
-    "coordinates": {"longitude": -96.797, "latitude": 32.777}
+    "coordinates": {"longitude": -96.784359, "latitude": 32.736212}
   },
   "finish": {
-    "query": "Austin, TX",
-    "label": "Austin, TX, USA",
-    "coordinates": {"longitude": -97.7431, "latitude": 30.2672}
+    "query": "Van Horn, TX",
+    "label": "Van Horn, TX, USA",
+    "coordinates": {"longitude": -104.831363, "latitude": 31.040253}
   },
   "route": {
-    "distance_miles": 200.46,
-    "duration_hours": 3.2199,
+    "distance_miles": 519.686,
+    "duration_hours": 7.7811,
     "geometry": {
       "type": "LineString",
-      "coordinates": [[-96.797, 32.777], [-97.7431, 30.2672]]
+      "coordinates": [ /* 3,031 coordinate pairs omitted */ ]
     }
   },
   "fuel": {
     "vehicle": {"mpg": 10, "max_range_miles": 500, "tank_capacity_gallons": 50},
-    "stops": [],
+    "stops": [{
+      "opis_truckstop_id": 52674,
+      "name": "FLYING J TRAVEL PLAZA #738",
+      "address": "I-20/FM707, EXIT 277",
+      "city": "Tye",
+      "state": "TX",
+      "coordinates": {"longitude": -99.872096, "latitude": 32.461115},
+      "route_mile": 195.759,
+      "distance_from_route_miles": 0.084,
+      "price_per_gallon": "3.12400000",
+      "gallons_purchased": "1.968579",
+      "fuel_cost": "6.15"
+    }],
     "summary": {
-      "total_gallons_consumed": "20.046000",
-      "total_gallons_purchased": "0.000000",
-      "total_fuel_cost": "0.00"
+      "total_gallons_consumed": "51.968579",
+      "total_gallons_purchased": "1.968579",
+      "total_fuel_cost": "6.15"
     }
   }
 }
 ```
 
-Each selected stop on a longer route has this structure (illustrative values):
+The result is internally consistent: **519.686 miles ÷ 10 MPG ≈ 51.9686 gallons** consumed. The vehicle starts with 50 gallons, leaving approximately **1.9686 gallons** to purchase; **1.968579 × $3.124 ≈ $6.15**. The API calculates quantities from unrounded route distance.
 
-```json
-{
-  "station_id": 1, "opis_truckstop_id": 123,
-  "name": "Truck Stop",
-  "address": "123 Main St",
-  "city": "Test City", "state": "TX",
-  "coordinates": {"longitude": -92.0, "latitude": 35.0},
-  "route_mile": 400.0,
-  "distance_from_route_miles": 0.5,
-  "price_per_gallon": "3.12500000",
-  "gallons_purchased": "10.000000",
-  "fuel_cost": "31.25"
-}
-```
+**Demo / verification:** the deployed API was verified end-to-end with **Dallas, TX → Van Horn, TX**, producing the **$6.15** plan above. Results depend on provider routing and the available station dataset; station database IDs are specific to the loaded dataset.
 
 Coordinates use longitude/latitude order in GeoJSON. Route miles and offsets are numeric with up to three decimal places; duration hours has up to four. Fuel prices, gallons and costs are fixed-point JSON **strings** with eight, six and two decimal places respectively. Rounding occurs only for presentation; totals use unrounded calculations, so adding individually rounded stop costs can differ from the rounded total by a cent. Location labels may be null when unavailable.
 
 ### Health endpoint
 
-`GET /api/health/` returns HTTP 200:
+`GET https://fuel-route-optimizer.up.railway.app/api/health/`
+
+Verified HTTP 200 response:
 
 ```json
 {"status": "ok"}
@@ -249,9 +293,22 @@ Coordinates use longitude/latitude order in GeoJSON. Route miles and offsets are
 
 ### Error responses
 
-Validation errors use standard DRF HTTP 400 responses, such as `{"start":["This field is required."]}`. Cross-field errors use `non_field_errors`; malformed JSON uses `detail`.
+Validation errors use standard DRF **HTTP 400** responses:
 
-Application errors use `{"error":{"code":"...","message":"..."}}`:
+| Input problem | Example response |
+|---|---|
+| Missing `start` | `{"start":["This field is required."]}` |
+| Blank `finish` | `{"finish":["This field may not be blank."]}` |
+
+Cross-field errors use `non_field_errors`; malformed JSON uses `detail`.
+
+Application errors use a consistent envelope, for example HTTP 422:
+
+```json
+{"error":{"code":"location_not_found","message":"Could not resolve the finish location."}}
+```
+
+The same structure applies to these exact status/code/message combinations:
 
 | HTTP | Code | Message |
 |---|---|---|
@@ -315,18 +372,18 @@ python manage.py makemigrations --check
 python manage.py test
 ```
 
-The verified suite contains **144 passing tests**. Provider HTTP is mocked; no real API key or supplied CSV is needed. CSV tests create temporary files; integration tests use Django's test database.
+The verified suite contains **153 tests passing**. Provider HTTP is mocked; no real API key or supplied CSV is needed. CSV tests create temporary files; integration tests use Django's test database.
 
-Coverage includes import validation/atomicity/duplicates, nullable coordinates and offline enrichment, provider parsing/timeouts/errors, cache normalization/failures/TTL, environment parsing, API validation/errors, local matching, optimizer edge cases, full local route/fuel integration, provider call counts and database query counts.
+Coverage includes import validation/atomicity/duplicates, nullable coordinates, offline enrichment and station metadata validation, provider parsing/timeouts/errors, cache normalization/failures/TTL, environment parsing, API validation/errors, local matching, optimizer edge cases, full local route/fuel integration, provider call counts and database query counts.
 
 Optimizer tests simulate tank invariants, exercise exact Decimal arithmetic and range boundaries, and compare costs against **729 integer-grid** and **27 fractional-grid** reference scenarios. Regression cases cover carried initial fuel, same-mile determinism, cheap stations just inside/outside reach, and unnecessary purchases. An 8,000-candidate case exercises scale without flaky wall-clock assertions.
 
 ## Assumptions and Tradeoffs
 
 1. The vehicle starts full; initial tank fuel is excluded from trip purchase cost.
-2. API MPG and range are fixed at 10 and 500 miles; there is no reserve or vehicle-specific configuration.
+2. API MPG and range are fixed at 10 and 500 miles, with a 50-gallon usable tank; there is no reserve or vehicle-specific configuration.
 3. Fuel prices are treated as deterministic for the request, without live price refresh.
-4. Only pre-geocoded stations are eligible; the default corridor is five miles.
+4. Only stations with complete stored coordinates are eligible; these must come from validated enrichment or independent verification. The default corridor is five miles.
 5. Main-route distance drives consumption. Off-route distance is reported, but **station detour mileage and cost are not included**. Additional routing to/from every station is intentionally avoided to keep external call volume bounded.
 6. SQLite and approximate local geographic math are intentional take-home choices. A nearby station may still require a substantial road detour.
 7. LocMemCache is process-local; restarts/eviction lose cached provider results.

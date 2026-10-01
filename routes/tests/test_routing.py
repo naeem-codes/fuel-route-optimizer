@@ -33,6 +33,17 @@ FINISH = Coordinates(-96.797, 32.777)
 
 
 class RoutingClientTests(SimpleTestCase):
+    def test_normalized_station_metadata_and_city_level_route_geocoding(self):
+        payload = deepcopy(GEOCODING)
+        payload['features'][0]['properties'].update(
+            region_a='TX', locality='Austin', localadmin='Austin', layer='locality',
+        )
+        self.handler.return_value = httpx.Response(200, json=payload)
+        result = self.client.geocode('Austin, TX')
+        self.assertEqual((result.region_code, result.locality, result.localadmin, result.layer),
+                         ('TX', 'Austin', 'Austin', 'locality'))
+        self.assert_one_request()
+
     def setUp(self):
         self.handler = Mock(return_value=httpx.Response(200, json=GEOCODING))
         self.client = OpenRouteServiceClient(
@@ -85,6 +96,8 @@ class RoutingClientTests(SimpleTestCase):
         result = self.client.geocode('Austin')
         self.assertIsNone(result.label)
         self.assertIsNone(result.country_code)
+        self.assertEqual((result.region_code, result.locality, result.localadmin, result.layer),
+                         (None, None, None, None))
 
     def test_routing_result_and_request(self):
         self.handler.return_value = httpx.Response(200, json=ROUTE)

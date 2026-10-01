@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 def _key(kind, value):
     digest = hashlib.sha256(json.dumps(value, ensure_ascii=True).encode()).hexdigest()
-    return f'heigit:routing:v1:{kind}:{digest}'
+    version = 2 if kind == 'geocode' else 1
+    return f'heigit:routing:v{version}:{kind}:{digest}'
 
 
 def _valid_coordinates(point):
@@ -36,7 +37,10 @@ def _valid_coordinates(point):
 
 def _valid_geocode(value):
     return isinstance(value, GeocodingResult) and _valid_coordinates(value.coordinates) and all(
-        field is None or isinstance(field, str) for field in (value.label, value.country_code, value.region)
+        field is None or isinstance(field, str) for field in (
+            value.label, value.country_code, value.region, value.region_code,
+            value.locality, value.localadmin, value.layer,
+        )
     )
 
 

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 from unittest.mock import Mock, patch
 
@@ -15,6 +16,29 @@ from routes.services.routing import Coordinates, OpenRouteServiceClient, Routing
     'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'routing-cache-tests',
 }}, ROUTING_CACHE_TTL_SECONDS=86400)
 class RoutingCacheTests(TestCase):
+    def test_extended_geocoding_metadata_round_trip(self):
+        from .test_routing import GEOCODING
+        from copy import deepcopy
+        payload = deepcopy(GEOCODING)
+        payload['features'][0]['properties'].update(
+            region_a='TX', locality='Austin', localadmin='Austin', layer='venue',
+        )
+        self.handler.side_effect = None
+        self.handler.return_value = httpx.Response(200, json=payload)
+        first = self.client.geocode('Austin')
+        cached = self.client.geocode(' AUSTIN ')
+        self.assertEqual(cached, first)
+        self.assertEqual((cached.region_code, cached.locality, cached.localadmin, cached.layer),
+                         ('TX', 'Austin', 'Austin', 'venue'))
+        self.handler.assert_called_once()
+
+    def test_corrupt_extended_metadata_is_not_reused(self):
+        valid = self.client.geocode('Start')
+        self.handler.reset_mock()
+        with patch('routes.services.cached_routing.cache.get', return_value=replace(valid, locality=123)):
+            self.client.geocode('Start')
+        self.handler.assert_called_once()
+
     def setUp(self):
         cache.clear()
         self.addCleanup(cache.clear)

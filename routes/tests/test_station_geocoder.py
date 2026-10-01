@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 from io import StringIO
 from unittest.mock import Mock, patch
@@ -13,10 +14,89 @@ from routes.services.routing import (
 from routes.services.station_geocoder import geocode_station
 
 
-RESULT = GeocodingResult(Coordinates(-96.7971235, 32.7776545), 'Dallas', 'USA', 'Texas')
+RESULT = GeocodingResult(Coordinates(-96.7971235, 32.7776545), 'Dallas', 'USA', 'Texas',
+                         region_code='TX', locality='Dallas', layer='venue')
 
 
 class StationGeocoderTests(TestCase):
+    def test_rejected_metadata_never_updates_coordinates(self):
+        station = self.station(latitude=Decimal('30'), longitude=Decimal('-97'))
+        cases = [
+            {'region_code': 'OK'}, {'region': 'Oklahoma'}, {'locality': 'Austin'},
+            {'country_code': 'CAN'}, {'country_code': None},
+            {'region_code': None, 'region': None}, {'locality': None},
+            {'locality': '', 'localadmin': 'Austin'},
+            {'locality': 'Austin', 'localadmin': 'Dallas'},
+            {'layer': None}, {'layer': 'country'}, {'layer': 'region'},
+            {'layer': 'county'}, {'layer': 'locality'}, {'layer': 'localadmin'},
+            {'layer': 'unknown'},
+            {'layer': 'street', 'locality': 'Austin'},
+            {'layer': 'street', 'region_code': 'OK'},
+            {'layer': 'street', 'country_code': 'CAN'},
+            {'layer': 'street', 'locality': None},
+        ]
+        for changes in cases:
+            with self.subTest(changes=changes):
+                self.provider.reset_mock()
+                self.provider.geocode.return_value = replace(RESULT, **changes)
+                with self.assertNumQueries(0), self.assertRaises(GeocodingError):
+                    geocode_station(station, client=self.provider)
+                self.provider.geocode.assert_called_once()
+                self.provider.get_route.assert_not_called()
+                self.assertEqual(station.latitude, Decimal('30'))
+                station.refresh_from_db()
+                self.assertEqual(station.latitude, Decimal('30'))
+                self.assertEqual(station.longitude, Decimal('-97'))
+
+    def test_street_with_matching_geography_is_accepted(self):
+        station = self.station(address='I-20 EXIT 131')
+        self.provider.geocode.return_value = replace(RESULT, layer='street')
+        with self.assertNumQueries(1):
+            geocode_station(station, client=self.provider)
+        station.refresh_from_db()
+        self.assertEqual(station.latitude, Decimal('32.777655'))
+        self.assertEqual(station.longitude, Decimal('-96.797124'))
+        self.provider.geocode.assert_called_once_with('Truck Stop, I-20 EXIT 131, Dallas, TX')
+        self.provider.get_route.assert_not_called()
+
+    def test_formatting_and_full_state_name_are_accepted(self):
+        station = self.station(city='St. Louis', state='MO')
+        self.provider.geocode.return_value = replace(
+            RESULT, country_code=' us ', region=' missouri ', region_code=None,
+            locality=' ST  LOUIS ', layer='address',
+        )
+        geocode_station(station, client=self.provider)
+        station.refresh_from_db()
+        self.assertEqual(station.latitude, Decimal('32.777655'))
+        self.provider.geocode.assert_called_once()
+
+    def test_localadmin_fallback_and_region_code_only(self):
+        station = self.station()
+        self.provider.geocode.return_value = replace(
+            RESULT, region=None, locality=None, localadmin='Dallas',
+        )
+        geocode_station(station, client=self.provider)
+        self.provider.geocode.assert_called_once()
+
+    def test_locality_takes_precedence_over_broader_localadmin(self):
+        station = self.station()
+        self.provider.geocode.return_value = replace(RESULT, localadmin='Different township')
+        geocode_station(station, client=self.provider)
+        self.provider.geocode.assert_called_once()
+
+    def test_rejected_result_is_unresolved_and_command_continues(self):
+        first, second = self.station(), self.station()
+        self.provider.geocode.side_effect = [replace(RESULT, locality='Austin'), RESULT]
+        output = self.run_command()
+        self.assertIn('Attempted: 2; resolved: 1; unresolved: 1.', output)
+        self.assertNotIn('Austin', output)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertIsNone(first.latitude)
+        self.assertIsNone(first.longitude)
+        self.assertIsNotNone(second.latitude)
+        self.assertEqual(self.provider.geocode.call_count, 2)
+
     def setUp(self):
         self.provider = Mock(spec=OpenRouteServiceClient)
         self.provider.geocode.return_value = RESULT

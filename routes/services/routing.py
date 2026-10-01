@@ -43,6 +43,10 @@ class GeocodingResult:
     label: str | None
     country_code: str | None
     region: str | None
+    region_code: str | None = None
+    locality: str | None = None
+    localadmin: str | None = None
+    layer: str | None = None
 
 
 @dataclass(frozen=True)
@@ -150,6 +154,10 @@ class OpenRouteServiceClient:
                 label=_optional_text(properties, 'label'),
                 country_code=_optional_text(properties, 'country_a'),
                 region=_optional_text(properties, 'region'),
+                region_code=_optional_text(properties, 'region_a'),
+                locality=_optional_text(properties, 'locality'),
+                localadmin=_optional_text(properties, 'localadmin'),
+                layer=_optional_text(properties, 'layer'),
             )
         except (KeyError, TypeError, ValueError, OverflowError):
             raise RoutingProviderError('Routing provider returned an invalid geocoding response.') from None

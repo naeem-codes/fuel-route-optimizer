@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Django backend for the fuel-route planning assessment. Given start and finish locations in the USA, it fetches a driving route, matches locally stored fuel stations, and returns cost-aware fuel purchases and total purchase cost. The vehicle uses **10 MPG**, has a **500-mile range**, and starts with a full tank.
+A Django backend for the fuel-route planning assessment. Start and finish locations are geocoded within the USA; the API fetches a driving route, matches locally stored fuel stations, and returns cost-aware fuel purchases and total purchase cost. The vehicle uses **10 MPG**, has a **500-mile range**, and starts with a full tank.
 
 ## Key Features
 
@@ -315,7 +315,7 @@ python manage.py makemigrations --check
 python manage.py test
 ```
 
-The verified suite contains **139 passing tests**. Provider HTTP is mocked; no real API key or supplied CSV is needed. CSV tests create temporary files; integration tests use Django's test database.
+The verified suite contains **144 passing tests**. Provider HTTP is mocked; no real API key or supplied CSV is needed. CSV tests create temporary files; integration tests use Django's test database.
 
 Coverage includes import validation/atomicity/duplicates, nullable coordinates and offline enrichment, provider parsing/timeouts/errors, cache normalization/failures/TTL, environment parsing, API validation/errors, local matching, optimizer edge cases, full local route/fuel integration, provider call counts and database query counts.
 

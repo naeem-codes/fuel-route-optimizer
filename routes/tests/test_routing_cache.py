@@ -152,7 +152,8 @@ class RoutingCacheTests(TestCase):
         self.assertEqual(warm['fuel']['summary']['total_fuel_cost'], '70.00')
         self.handler.assert_not_called()
 
-    def test_warm_provider_cache_does_not_hide_fuel_infeasibility(self):
+    @patch('routes.views.logger')
+    def test_warm_provider_cache_does_not_hide_fuel_infeasibility(self, _logger):
         self.distance = 1000 * 1609.344
         self.assertEqual(self.post(queries=1, status=422)['error']['code'], 'fuel_route_infeasible')
         self.handler.reset_mock()

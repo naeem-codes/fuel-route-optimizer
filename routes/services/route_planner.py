@@ -14,6 +14,9 @@ from .routing import GeocodingError, GeocodingResult, OpenRouteServiceClient, Ro
 
 MPG = 10
 MAX_RANGE_MILES = 500
+# One millionth of a mile (~1.6 mm): remove geometry float noise without
+# weakening the optimizer's strict range checks or rounding provider distance.
+CALIBRATED_POSITION_QUANTUM = Decimal('0.000001')
 
 
 def _fixed(value, places):
@@ -120,7 +123,9 @@ def plan_route(start: str, finish: str, *, client=None) -> RoutePlan:
     # used for fuel consumption. Keep geometry and perpendicular offsets intact.
     candidates = [FuelCandidate(
         station.station_id, station.truckstop_name, station.retail_price,
-        min(distance_miles, Decimal(str(station.distance_along_route_miles)) / geometry_distance * distance_miles),
+        min(distance_miles, (
+            Decimal(str(station.distance_along_route_miles)) / geometry_distance * distance_miles
+        ).quantize(CALIBRATED_POSITION_QUANTUM, rounding=ROUND_HALF_UP)),
     ) for station in matched]
     fuel_plan = optimize_fuel(distance_miles, candidates, mpg=MPG, max_range_miles=MAX_RANGE_MILES)
     return RoutePlan(start, finish, start_location, finish_location, route,

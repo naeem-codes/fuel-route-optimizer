@@ -106,7 +106,8 @@ class RoutesAPITests(TestCase):
                         'start': [error], 'finish': [START, error], 'route': [START, FINISH],
                     }[stage]
                     self.provider.get_route.side_effect = error if stage == 'route' else None
-                    response = self.post()
+                    with patch('routes.views.logger'):
+                        response = self.post()
                     self.assertEqual(response.status_code, 502)
                     self.assertEqual(response.json(), {'error': {
                         'code': 'routing_provider_error', 'message': 'Routing provider could not complete the request.',
@@ -117,7 +118,8 @@ class RoutesAPITests(TestCase):
     def test_missing_api_key(self):
         from routes.services.routing import OpenRouteServiceClient
         self.factory.side_effect = OpenRouteServiceClient
-        response = self.post()
+        with patch('routes.views.logger'):
+            response = self.post()
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.json(), {'error': {
             'code': 'routing_configuration_error', 'message': 'Routing service is not configured.',

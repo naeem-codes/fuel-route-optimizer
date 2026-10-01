@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from decimal import Decimal
 from unittest.mock import call, patch
 
@@ -6,7 +7,7 @@ from rest_framework.test import APIClient
 
 from routes.models import FuelStation
 from routes.services.routing import Coordinates, GeocodingResult, RouteResult
-from routes.services.station_matcher import match_stations
+from routes.services.station_matcher import geometry_length_miles, match_stations
 
 
 @override_settings(CACHES={'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}})
@@ -36,7 +37,8 @@ class FuelRouteIntegrationTests(TestCase):
         self.provider.geocode.side_effect = [self.start, self.finish]
         self.provider.get_route.return_value = self.route
         # Long routes use one bounding-box SELECT; short routes need no queries.
-        with self.assertNumQueries(expected_queries):
+        expected_log = patch('routes.views.logger') if expected_status == 422 else nullcontext()
+        with expected_log, self.assertNumQueries(expected_queries):
             response = self.api.post('/api/routes/', {'start': 'Start', 'finish': 'Finish'}, format='json')
         self.assertEqual(response.status_code, expected_status, response.content)
         self.assertEqual(self.provider.mock_calls, [
@@ -144,3 +146,43 @@ class FuelRouteIntegrationTests(TestCase):
         self.assertEqual(data['fuel']['stops'][0]['gallons_purchased'], '0.120000')
         self.assertEqual(data['fuel']['stops'][0]['fuel_cost'], '0.37')
         self.assertEqual(data['fuel']['summary']['total_fuel_cost'], '0.37')
+
+    def boundary_route(self, segments):
+        self.route = RouteResult(1609344, 36000, tuple(
+            Coordinates(-120 + 18 * i / segments, 35) for i in range(segments + 1)
+        ))
+        return self.station(500, '3', longitude=Decimal('-111'), latitude=Decimal('35'))
+
+    def calibrated_position(self, station):
+        matched, = match_stations(self.route.geometry, [station])
+        return (Decimal(str(matched.distance_along_route_miles))
+                / Decimal(str(geometry_length_miles(self.route.geometry))) * Decimal(1000))
+
+    def test_positive_calibration_noise_at_initial_500_mile_boundary(self):
+        station = self.boundary_route(180)
+        self.assertGreater(self.calibrated_position(station), Decimal(500))
+        data = self.request()
+        self.assertEqual(data['fuel']['stops'][0]['route_mile'], 500.0)
+        self.assertEqual(data['fuel']['stops'][0]['gallons_purchased'], '50.000000')
+        self.assertEqual(data['fuel']['summary']['total_fuel_cost'], '150.00')
+
+    def test_negative_calibration_noise_at_final_500_mile_boundary(self):
+        station = self.boundary_route(100)
+        self.assertLess(self.calibrated_position(station), Decimal(500))
+        data = self.request()
+        self.assertEqual(data['fuel']['stops'][0]['route_mile'], 500.0)
+        self.assertEqual(data['fuel']['stops'][0]['gallons_purchased'], '50.000000')
+
+    def test_genuine_small_beyond_range_initial_and_final_legs_rejected(self):
+        station = self.boundary_route(180)
+        for longitude in (Decimal('-110.999999'), Decimal('-111.000001')):
+            with self.subTest(longitude=longitude):
+                station.longitude = longitude
+                station.save(update_fields=['longitude'])
+                self.assertEqual(self.request(422)['error']['code'], 'fuel_route_infeasible')
+
+    def test_provider_total_distance_is_not_quantized(self):
+        self.boundary_route(180)
+        self.route = RouteResult(float(Decimal('1000.000001') * Decimal('1609.344')),
+                                 36000, self.route.coordinates)
+        self.assertEqual(self.request(422)['error']['code'], 'fuel_route_infeasible')

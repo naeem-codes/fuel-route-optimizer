@@ -35,7 +35,7 @@ def parse_row(row, row_number):
 
     try:
         price = Decimal(values['retail_price'])
-        if not price.is_finite():
+        if not price.is_finite() or price <= 0:
             raise InvalidOperation
         values['retail_price'] = price
     except InvalidOperation as exc:

@@ -99,6 +99,18 @@ class ImportFuelPricesTests(TestCase):
                     self.run_import(replace=replace)
                 self.assertEqual(list(FuelStation.objects.values()), original)
 
+    def test_invalid_prices_roll_back_append_and_replace_after_a_batch(self):
+        self.write_csv([ROW])
+        self.run_import()
+        original = list(FuelStation.objects.values())
+        for price in ('0', '0.00', '-1', '-0.01', 'NaN', 'Infinity', '-Infinity', 'oops'):
+            for replace in (False, True):
+                with self.subTest(price=price, replace=replace):
+                    self.write_csv([ROW] * 501 + [[*ROW[:-1], price]])
+                    with self.assertRaisesMessage(CommandError, 'CSV row 503: invalid Retail Price.'):
+                        self.run_import(replace=replace)
+                    self.assertEqual(list(FuelStation.objects.values()), original)
+
     def test_database_failure_rolls_back_replacement(self):
         self.write_csv([ROW])
         self.run_import()

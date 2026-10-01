@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from routes.models import FuelStation
 
 from .fuel_optimizer import FuelCandidate, FuelPlan, optimize_fuel
+from .cached_routing import CachedRoutingClient
 from .station_matcher import MatchedStation, geometry_length_miles, match_stations
 
 from .routing import GeocodingError, GeocodingResult, OpenRouteServiceClient, RouteResult, RoutingProviderError
@@ -91,7 +92,7 @@ class RoutePlan:
 def plan_route(start: str, finish: str, *, client=None) -> RoutePlan:
     """Plan validated inputs, stopping immediately if either lookup fails."""
     if client is None:
-        client = OpenRouteServiceClient()
+        client = CachedRoutingClient(OpenRouteServiceClient())
     try:
         start_location = client.geocode(start)
     except GeocodingError:

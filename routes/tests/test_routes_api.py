@@ -7,6 +7,7 @@ from routes.services.routing import GeocodingError, RouteNotFoundError, RoutingP
 from .test_route_planner import START, FINISH, ROUTE
 
 
+@override_settings(CACHES={'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}})
 class RoutesAPITests(TestCase):
     def setUp(self):
         self.api = APIClient()

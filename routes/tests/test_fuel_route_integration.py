@@ -1,7 +1,7 @@
 from decimal import Decimal
 from unittest.mock import call, patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from routes.models import FuelStation
@@ -9,6 +9,7 @@ from routes.services.routing import Coordinates, GeocodingResult, RouteResult
 from routes.services.station_matcher import match_stations
 
 
+@override_settings(CACHES={'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}})
 class FuelRouteIntegrationTests(TestCase):
     def setUp(self):
         self.api = APIClient()

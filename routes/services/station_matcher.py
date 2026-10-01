@@ -49,6 +49,15 @@ def _haversine(a, b):
     return 2 * EARTH_RADIUS_MILES * math.asin(math.sqrt(min(1.0, max(0.0, h))))
 
 
+def geometry_length_miles(geometry):
+    """Length on the matcher's distance scale, for provider-distance calibration.
+
+    Call after match_stations has validated the geometry.
+    """
+    points = geometry['coordinates']
+    return sum(_haversine(a, b) for a, b in zip(points, points[1:]))
+
+
 @dataclass(frozen=True)
 class _Segment:
     start: tuple

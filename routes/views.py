@@ -3,6 +3,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from .serializers import RouteRequestSerializer
+from .services.fuel_optimizer import FuelRouteInfeasibleError
 from .services.route_planner import LocationNotFoundError, plan_route
 from .services.routing import RoutingConfigurationError, RoutingProviderError, RouteNotFoundError
 
@@ -21,6 +22,8 @@ def plan_route_view(request):
     serializer.is_valid(raise_exception=True)
     try:
         result = plan_route(**serializer.validated_data)
+    except FuelRouteInfeasibleError:
+        return _error('fuel_route_infeasible', 'A feasible fuel plan could not be found for this route.', 422)
     except LocationNotFoundError as exc:
         # Unresolvable locations consistently use 422; invalid input uses DRF 400.
         return _error('location_not_found', f'Could not resolve the {exc.field} location.', 422)

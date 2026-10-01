@@ -1,14 +1,13 @@
 from unittest.mock import call, patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from routes.services.routing import GeocodingError, RouteNotFoundError, RoutingProviderError
 from .test_route_planner import START, FINISH, ROUTE
 
 
-class RoutesAPITests(SimpleTestCase):
-    # SimpleTestCase forbids database queries, including FuelStation lookups.
+class RoutesAPITests(TestCase):
     def setUp(self):
         self.api = APIClient()
         patcher = patch('routes.services.route_planner.OpenRouteServiceClient', autospec=True)
@@ -31,7 +30,13 @@ class RoutesAPITests(SimpleTestCase):
                       'coordinates': {'longitude': -96.797, 'latitude': 32.777}},
             'finish': {'query': 'Chicago, IL', 'label': 'Chicago, IL, USA',
                        'coordinates': {'longitude': -87.63, 'latitude': 41.88}},
-            'route': {'distance_miles': 1000.0, 'duration_hours': 15.0, 'geometry': ROUTE.geometry},
+            'route': {'distance_miles': 400.0, 'duration_hours': 15.0, 'geometry': ROUTE.geometry},
+            'fuel': {
+                'vehicle': {'mpg': 10, 'max_range_miles': 500, 'tank_capacity_gallons': 50},
+                'stops': [],
+                'summary': {'total_gallons_consumed': '40.000000',
+                            'total_gallons_purchased': '0.000000', 'total_fuel_cost': '0.00'},
+            },
         })
         self.factory.assert_called_once_with()
         self.assertEqual(self.provider.mock_calls, [

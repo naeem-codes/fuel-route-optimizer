@@ -1,6 +1,6 @@
 from unittest.mock import Mock, call
 
-from django.test import SimpleTestCase
+from django.test import TestCase
 
 from routes.services.route_planner import LocationNotFoundError, plan_route
 from routes.services.routing import Coordinates, GeocodingError, GeocodingResult, OpenRouteServiceClient, RouteResult
@@ -8,10 +8,10 @@ from routes.services.routing import Coordinates, GeocodingError, GeocodingResult
 
 START = GeocodingResult(Coordinates(-96.797, 32.777), 'Dallas, TX, USA', 'USA', 'Texas')
 FINISH = GeocodingResult(Coordinates(-87.63, 41.88), 'Chicago, IL, USA', 'USA', 'Illinois')
-ROUTE = RouteResult(1609344.0, 54000.0, (START.coordinates, FINISH.coordinates))
+ROUTE = RouteResult(643737.6, 54000.0, (START.coordinates, FINISH.coordinates))
 
 
-class RoutePlannerTests(SimpleTestCase):
+class RoutePlannerTests(TestCase):
     def setUp(self):
         self.client = Mock(spec=OpenRouteServiceClient)
         self.client.geocode.side_effect = [START, FINISH]
@@ -25,7 +25,7 @@ class RoutePlannerTests(SimpleTestCase):
         ])
         self.assertIs(result.route, ROUTE)
         self.assertEqual(result.as_dict()['route'], {
-            'distance_miles': 1000.0, 'duration_hours': 15.0, 'geometry': ROUTE.geometry,
+            'distance_miles': 400.0, 'duration_hours': 15.0, 'geometry': ROUTE.geometry,
         })
 
     def test_rounding_only_at_response_boundary(self):
